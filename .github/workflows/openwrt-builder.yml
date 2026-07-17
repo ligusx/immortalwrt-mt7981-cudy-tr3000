@@ -179,7 +179,7 @@ jobs:
             /workdir/.ccache
             /workdir/openwrt/dl
             /workdir/openwrt/staging_dir
-          key: ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}
+          key: ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}-v2
           restore-keys: |
             ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-
 
@@ -226,45 +226,53 @@ jobs:
             esac
             
             echo "Using Config: $CONFIG"
+
+            # 🔥 第一步：加载配置前，先清理所有 OpenClash 残留
+            echo "🧹 Purging OpenClash from all caches..."
+            rm -rf ./staging_dir/*/root-*/etc/openclash 2>/dev/null || true
+            rm -rf ./build_dir/*/root-*/etc/openclash 2>/dev/null || true
+            find ./dl -name "*openclash*" -delete 2>/dev/null || true
             
             # 3. 加载配置
             cp -f $GITHUB_WORKSPACE/$CONFIG .config
 
-            # 清理残留
-            # 在 feeds install 完成后，删除 OpenClash
+            # 🔥 第二步：删除 feeds 中的 OpenClash（必须在 make defconfig 之前）
             echo "🧹 Removing OpenClash from feeds..."
-            rm -rf ./feeds/luci/applications/luci-app-openclash
-            rm -rf ./feeds/small/luci-app-openclash
+            rm -rf ./feeds/luci/applications/luci-app-openclash 2>/dev/null || true
+            rm -rf ./feeds/small/luci-app-openclash 2>/dev/null || true
+            rm -rf ./package/feeds/luci/luci-app-openclash 2>/dev/null || true
+            rm -rf ./package/feeds/small/luci-app-openclash 2>/dev/null || true
 
-            # 同时清理可能被 install 复制到 package/ 的副本
-            rm -rf ./package/feeds/luci/luci-app-openclash
-            rm -rf ./package/feeds/small/luci-app-openclash
-            
+            # 清理残留
             make clean
-            rm -rf ./tmp ./staging_dir ./build_dir
+            rm -rf ./tmp
             
             # 4. 刷新配置并下载
             make defconfig
-            # 在 Multi-Device Compilation Loop 中，make defconfig 后面加：
+
+            # 调试检查
             echo "🔍 === Checking openclash references ==="
-            grep -r "openclash" .config || echo "No openclash in .config"
-            find ./package -type d -name "*openclash*" 2>/dev/null || echo "No openclash package dir"
-            find ./feeds -type d -name "*openclash*" 2>/dev/null || echo "No openclash in feeds"
-            # 删除 dl/ 中的 OpenClash 源码
-            rm -f /workdir/openwrt/dl/luci-app-openclash*.tar.gz
-            rm -f /workdir/openwrt/dl/openclash*.tar.gz
+            grep -i "openclash" .config || echo "✅ No openclash in .config"
+            find ./package -type d -name "*openclash*" 2>/dev/null || echo "✅ No openclash package dir"
+            find ./feeds -type d -name "*openclash*" 2>/dev/null || echo "✅ No openclash in feeds"
+
             make download -j$(nproc)
             
             # 5. 开始编译
-            # 使用 ccache 加速，并保留 Toolchain
             if ! make -j$(nproc) CC="ccache gcc" CXX="ccache g++"; then
               echo "⚠️ Multi-threaded failed, retrying single-threaded..."
               make -j1 V=s || exit 1
             fi
-            # 🔥 新增：暴力删除空目录
-            echo "🧹 Removing empty openclash dir from firmware..."
-            rm -rf ./staging_dir/*/root-*/etc/openclash 2>/dev/null || true
-            rm -rf ./build_dir/*/root-*/etc/openclash 2>/dev/null || true
+
+            # 🔥 第三步：编译完成后，直接删除 rootfs 中的 /etc/openclash
+            echo "🧹 Removing /etc/openclash from final rootfs..."
+            for rootdir in $(find ./build_dir -type d -name "root-*" 2>/dev/null); do
+              if [ -d "$rootdir/etc/openclash" ]; then
+                rm -rf "$rootdir/etc/openclash"
+                echo "✅ Removed: $rootdir/etc/openclash"
+              fi
+            done
+            find ./staging_dir -type d -path "*/root-*/etc/openclash" -exec rm -rf {} + 2>/dev/null || true
 
             echo "✅ $DEV build finished."
             df -hT /workdir
