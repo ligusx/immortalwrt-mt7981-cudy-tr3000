@@ -178,6 +178,7 @@ jobs:
           path: |
             /workdir/.ccache
             /workdir/openwrt/dl
+            /workdir/openwrt/staging_dir
           key: ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}
           restore-keys: |
             ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-
@@ -235,6 +236,14 @@ jobs:
             
             # 4. 刷新配置并下载
             make defconfig
+            # 在 Multi-Device Compilation Loop 中，make defconfig 后面加：
+            echo "🔍 === Checking openclash references ==="
+            grep -r "openclash" .config || echo "No openclash in .config"
+            find ./package -type d -name "*openclash*" 2>/dev/null || echo "No openclash package dir"
+            find ./feeds -type d -name "*openclash*" 2>/dev/null || echo "No openclash in feeds"
+            # 删除 dl/ 中的 OpenClash 源码
+            rm -f /workdir/openwrt/dl/luci-app-openclash*.tar.gz
+            rm -f /workdir/openwrt/dl/openclash*.tar.gz
             make download -j$(nproc)
             
             # 5. 开始编译
