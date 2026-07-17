@@ -239,8 +239,9 @@ jobs:
             # 同时清理可能被 install 复制到 package/ 的副本
             rm -rf ./package/feeds/luci/luci-app-openclash
             rm -rf ./package/feeds/small/luci-app-openclash
+            
             make clean
-            rm -rf ./tmp
+            rm -rf ./tmp ./staging_dir ./build_dir
             
             # 4. 刷新配置并下载
             make defconfig
@@ -260,6 +261,10 @@ jobs:
               echo "⚠️ Multi-threaded failed, retrying single-threaded..."
               make -j1 V=s || exit 1
             fi
+            # 🔥 新增：暴力删除空目录
+            echo "🧹 Removing empty openclash dir from firmware..."
+            rm -rf ./staging_dir/*/root-*/etc/openclash 2>/dev/null || true
+            rm -rf ./build_dir/*/root-*/etc/openclash 2>/dev/null || true
 
             echo "✅ $DEV build finished."
             df -hT /workdir
